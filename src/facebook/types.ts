@@ -24,6 +24,7 @@ export interface MarketplaceListing {
   price: string;
   location: string;
   imageUrl: string;
+  sellerId: string;
   sellerName: string;
   postedDate: string;
   url: string;
@@ -35,9 +36,26 @@ export interface MarketplaceListingDetail extends MarketplaceListing {
   images: string[];
   condition: string;
   seller: {
+    id: string;
     name: string;
     profileUrl: string;
   };
+}
+
+export interface MessageThread {
+  id: string;
+  title: string;
+  snippet: string;
+  updatedAt: string;
+  unreadCount: number;
+  participantNames: string[];
+}
+
+export interface MarketplaceMessage {
+  id: string;
+  senderId: string;
+  text: string;
+  sentAt: string;
 }
 
 export interface SearchParams {

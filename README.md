@@ -77,6 +77,19 @@ Return a listing's photos as native MCP image content so vision-capable models c
 | `image_numbers` | number[] | no | Specific 1-based photo numbers to return |
 | `max_images` | number | no | Photos to return when `image_numbers` is omitted (default: 4; max: 10) |
 
+### Messaging tools
+
+These tools use the authenticated Facebook session to work with Messenger. `start_seller_thread` and `send_thread_message` send real messages; call them only after composing the final text.
+
+| Tool | Purpose |
+|------|---------|
+| `check_messages` | List recent inbox threads, including unread counts and thread IDs. |
+| `read_message_thread` | Read recent text messages in a thread. |
+| `start_seller_thread` | Open a direct thread with a seller ID and send the first message. Seller IDs are included in search/listing results when Facebook returns them. |
+| `send_thread_message` | Send a message in an existing thread returned by `check_messages`. |
+
+The server reports an error when Facebook does not explicitly confirm a send; it does not present an unconfirmed write as successful.
+
 ### `monitor_search`
 Save a search as a monitor to track new listings over time.
 

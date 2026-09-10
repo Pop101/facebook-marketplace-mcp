@@ -35,6 +35,7 @@ export function parseSearchResponse(data: unknown): SearchResult {
             listing.location?.reverse_geocode?.city ??
             "Unknown",
           imageUrl: listing.primary_listing_photo?.image?.uri ?? "",
+          sellerId: listing.marketplace_listing_seller?.id ?? "",
           sellerName: listing.marketplace_listing_seller?.name ?? "Unknown",
           postedDate: listing.creation_time
             ? new Date(listing.creation_time * 1000).toISOString()
@@ -69,13 +70,14 @@ export function parseListingDetailFromPage(
     price: "",
     location: "",
     imageUrl: "",
+    sellerId: "",
     images: [],
     sellerName: "",
     postedDate: "",
     url: `https://www.facebook.com/marketplace/item/${listingId}/`,
     isPending: false,
     condition: "",
-    seller: { name: "", profileUrl: "" },
+    seller: { id: "", name: "", profileUrl: "" },
   };
 
   // Try to extract from meta tags first (most reliable)
@@ -121,6 +123,14 @@ export function parseListingDetailFromPage(
   if (sellerMatch) {
     detail.sellerName = sellerMatch[1];
     detail.seller.name = sellerMatch[1];
+  }
+
+  const sellerIdMatch = html.match(
+    /"marketplace_listing_seller"\s*:\s*\{[^}]*"id"\s*:\s*"(\d+)"/
+  );
+  if (sellerIdMatch) {
+    detail.sellerId = sellerIdMatch[1];
+    detail.seller.id = sellerIdMatch[1];
   }
 
   // Extract condition

@@ -3,6 +3,8 @@ import type {
   SearchParams,
   SearchResult,
   MarketplaceListingDetail,
+  MarketplaceMessage,
+  MessageThread,
 } from "./types.js";
 import {
   extractChromeCookies,
@@ -22,6 +24,7 @@ import { RateLimiter } from "../utils/rate-limit.js";
 
 const GRAPHQL_URL = "https://www.facebook.com/api/graphql/";
 const MARKETPLACE_URL = "https://www.facebook.com/marketplace/";
+const FACEBOOK_URL = "https://www.facebook.com";
 
 const USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -218,6 +221,52 @@ export class FacebookClient {
     }
   }
 
+  private async mercuryRequest(
+    path: string,
+    fields: Record<string, string>
+  ): Promise<unknown> {
+    const session = await this.ensureSession();
+    await this.rateLimiter.wait();
+    this.reqCounter++;
+
+    const body = new URLSearchParams({
+      ...fields,
+      __user: session.userId,
+      __a: "1",
+      __req: this.reqCounter.toString(36),
+      __rev: session.clientRevision,
+      fb_dtsg: session.fbDtsg,
+      jazoest: session.jazoest,
+      lsd: session.lsd,
+    });
+    const res = await fetch(new URL(path, FACEBOOK_URL), {
+      method: "POST",
+      headers: {
+        ...BROWSER_HEADERS,
+        Cookie: session.cookieHeader,
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "*/*",
+        "X-Requested-With": "XMLHttpRequest",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        Origin: FACEBOOK_URL,
+        Referer: "https://www.facebook.com/messages/",
+        "X-FB-LSD": session.lsd,
+      },
+      body: body.toString(),
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      this.clearSession();
+      throw new Error("Session expired. Re-initializing on next request.");
+    }
+    if (!res.ok) {
+      throw new Error(`Facebook messaging request failed: ${res.status} ${res.statusText}`);
+    }
+    return parseFacebookResponse(await res.text());
+  }
+
   async searchListings(params: SearchParams): Promise<SearchResult> {
     const variables = buildSearchVariables(params);
     const data = await this.graphqlRequest(MARKETPLACE_SEARCH_DOC_ID, variables);
@@ -275,8 +324,178 @@ export class FacebookClient {
     }
   }
 
+  async checkMessages(limit = 20): Promise<MessageThread[]> {
+    const data = await this.mercuryRequest("/ajax/mercury/threadlist_info.php", {
+      "folder[0]": "inbox",
+      "folder[1]": "other",
+      limit: String(limit),
+      load_messages: "false",
+      load_read_receipts: "false",
+    });
+    return parseMessageThreads(data);
+  }
+
+  async getMessageThread(
+    threadId: string,
+    limit = 20
+  ): Promise<MarketplaceMessage[]> {
+    const data = await this.mercuryRequest("/ajax/mercury/thread_info.php", {
+      "thread_ids[0]": threadId,
+      message_limit: String(limit),
+      load_messages: "true",
+      load_read_receipts: "false",
+    });
+    return parseMessages(data);
+  }
+
+  async sendSellerMessage(args: {
+    message: string;
+    threadId?: string;
+    sellerId?: string;
+  }): Promise<{ threadId: string; messageId: string }> {
+    if (!args.threadId && !args.sellerId) {
+      throw new Error("Provide either an existing thread ID or a seller ID.");
+    }
+    const session = await this.ensureSession();
+    const offlineThreadingId = `${Date.now()}${Math.floor(Math.random() * 1_000_000_000)
+      .toString()
+      .padStart(9, "0")}`;
+    const fields: Record<string, string> = {
+      "message_batch[0][action_type]": "ma-type:user-generated-message",
+      "message_batch[0][author]": `fbid:${session.userId}`,
+      "message_batch[0][body]": args.message,
+      "message_batch[0][offline_threading_id]": offlineThreadingId,
+      "message_batch[0][source]": "source:chat:web",
+      "message_batch[0][timestamp]": String(Date.now()),
+      client: "mercury",
+    };
+    if (args.threadId) {
+      fields["message_batch[0][thread_id]"] = args.threadId;
+    } else if (args.sellerId) {
+      fields["message_batch[0][specific_to_list][1]"] = `fbid:${args.sellerId}`;
+    }
+
+    const data = await this.mercuryRequest("/ajax/mercury/send_messages.php", fields);
+    const response = findFirstObject(data, (value) =>
+      typeof value.message_id === "string" || typeof value.messageId === "string"
+    );
+    const messageId = stringField(response, "message_id", "messageId") ?? "";
+    const threadId =
+      stringField(response, "thread_id", "threadId", "thread_fbid") ??
+      args.threadId ??
+      "";
+    if (!messageId || !threadId) {
+      throw new Error("Facebook did not confirm that the message was sent.");
+    }
+    return { threadId, messageId };
+  }
+
   clearSession() {
     this.session = null;
     this.reqCounter = 0;
   }
+}
+
+function parseFacebookResponse(text: string): unknown {
+  const jsonStart = text.search(/[\[{]/);
+  if (jsonStart < 0) {
+    throw new Error(`Failed to parse Facebook response: ${text.slice(0, 200)}`);
+  }
+  let response: unknown;
+  try {
+    response = JSON.parse(text.slice(jsonStart));
+  } catch {
+    throw new Error(`Failed to parse Facebook response: ${text.slice(0, 200)}`);
+  }
+  const error = findFirstObject(response, (record) =>
+    typeof record.error === "string" ||
+    typeof record.error === "number" ||
+    typeof record.errorSummary === "string"
+  );
+  if (error) {
+    throw new Error(
+      stringField(error, "errorSummary", "errorDescription", "error") ??
+        "Facebook rejected the request."
+    );
+  }
+  return response;
+}
+
+function stringField(value: unknown, ...names: string[]): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  for (const name of names) {
+    const field = record[name];
+    if (typeof field === "string" || typeof field === "number") return String(field);
+  }
+  return undefined;
+}
+
+function numberField(value: unknown, ...names: string[]): number {
+  const text = stringField(value, ...names);
+  return text && Number.isFinite(Number(text)) ? Number(text) : 0;
+}
+
+function findObjects(value: unknown, predicate: (record: Record<string, unknown>) => boolean) {
+  const found: Record<string, unknown>[] = [];
+  const visited = new Set<object>();
+  const visit = (current: unknown) => {
+    if (!current || typeof current !== "object" || visited.has(current)) return;
+    visited.add(current);
+    if (Array.isArray(current)) {
+      current.forEach(visit);
+      return;
+    }
+    const record = current as Record<string, unknown>;
+    if (predicate(record)) found.push(record);
+    Object.values(record).forEach(visit);
+  };
+  visit(value);
+  return found;
+}
+
+function findFirstObject(
+  value: unknown,
+  predicate: (record: Record<string, unknown>) => boolean
+): Record<string, unknown> | undefined {
+  return findObjects(value, predicate)[0];
+}
+
+function parseMessageThreads(data: unknown): MessageThread[] {
+  const seen = new Set<string>();
+  return findObjects(data, (record) =>
+    typeof record.thread_fbid === "string" || typeof record.thread_id === "string"
+  )
+    .map((record) => {
+      const id = stringField(record, "thread_fbid", "thread_id") ?? "";
+      const participants = Array.isArray(record.participants)
+        ? record.participants
+            .map((participant) => stringField(participant, "name", "short_name"))
+            .filter((name): name is string => Boolean(name))
+        : [];
+      return {
+        id,
+        title: stringField(record, "name", "thread_name") ?? participants.join(", "),
+        snippet: stringField(record, "snippet", "snippet_text", "last_message_text") ?? "",
+        updatedAt: stringField(record, "timestamp", "last_message_timestamp") ?? "",
+        unreadCount: numberField(record, "unread_count", "unreadCount"),
+        participantNames: participants,
+      };
+    })
+    .filter((thread) => Boolean(thread.id) && !seen.has(thread.id) && Boolean(seen.add(thread.id)));
+}
+
+function parseMessages(data: unknown): MarketplaceMessage[] {
+  const seen = new Set<string>();
+  return findObjects(data, (record) =>
+    typeof record.message_id === "string" &&
+    (typeof record.body === "string" || typeof record.text === "string")
+  )
+    .map((record) => ({
+      id: stringField(record, "message_id") ?? "",
+      senderId: stringField(record, "author", "sender_fbid", "sender_id") ?? "",
+      text: stringField(record, "body", "text") ?? "",
+      sentAt: stringField(record, "timestamp", "timestamp_precise") ?? "",
+    }))
+    .filter((message) => Boolean(message.id) && !seen.has(message.id) && Boolean(seen.add(message.id)));
 }

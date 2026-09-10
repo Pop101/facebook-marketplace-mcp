@@ -23,6 +23,7 @@ export function createListingHandler(client: FacebookClient) {
           : null,
         "",
         `**Seller:** ${listing.seller.name}`,
+        listing.seller.id ? `**Seller ID:** \`${listing.seller.id}\`` : null,
         listing.seller.profileUrl
           ? `**Profile:** ${listing.seller.profileUrl}`
           : null,

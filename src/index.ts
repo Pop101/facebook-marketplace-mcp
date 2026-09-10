@@ -23,6 +23,16 @@ import {
   createDeleteMonitorHandler,
   createListMonitorsHandler,
 } from "./tools/monitor.js";
+import {
+  checkMessagesSchema,
+  readMessageThreadSchema,
+  startSellerThreadSchema,
+  sendThreadMessageSchema,
+  createCheckMessagesHandler,
+  createReadMessageThreadHandler,
+  createStartSellerThreadHandler,
+  createSendThreadMessageHandler,
+} from "./tools/messages.js";
 
 const client = new FacebookClient({
   maxRequestsPerMinute: 3,
@@ -96,6 +106,34 @@ server.tool(
   "List all saved search monitors",
   listMonitorsSchema,
   createListMonitorsHandler()
+);
+
+server.tool(
+  "check_messages",
+  "Check recent Facebook Messenger inbox threads and identify unread seller replies. Use read_message_thread to inspect a thread.",
+  checkMessagesSchema,
+  createCheckMessagesHandler(client)
+);
+
+server.tool(
+  "read_message_thread",
+  "Read recent text messages in a Facebook Messenger thread.",
+  readMessageThreadSchema,
+  createReadMessageThreadHandler(client)
+);
+
+server.tool(
+  "start_seller_thread",
+  "Open a Facebook Messenger thread with a Marketplace seller and send the first message. This action sends a real message.",
+  startSellerThreadSchema,
+  createStartSellerThreadHandler(client)
+);
+
+server.tool(
+  "send_thread_message",
+  "Send a real message in an existing Facebook Messenger thread.",
+  sendThreadMessageSchema,
+  createSendThreadMessageHandler(client)
 );
 
 // Start the server

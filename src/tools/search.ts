@@ -64,7 +64,7 @@ export function createSearchHandler(client: FacebookClient) {
       const summary = result.listings
         .map(
           (l, i) =>
-            `${i + 1}. **${l.title}** — ${l.price}\n   📍 ${l.location} | 👤 ${l.sellerName}${l.isPending ? " ⏳ PENDING" : ""}\n   🔗 ${l.url}`
+            `${i + 1}. **${l.title}** — ${l.price}\n   📍 ${l.location} | 👤 ${l.sellerName}${l.sellerId ? ` (seller ID: \`${l.sellerId}\`)` : ""}${l.isPending ? " ⏳ PENDING" : ""}\n   🔗 ${l.url}`
         )
         .join("\n\n");
 
