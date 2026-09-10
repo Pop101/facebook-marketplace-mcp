@@ -11,11 +11,13 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "capture-queries": "tsx scripts/capture-queries.ts"
+    "capture-queries": "tsx scripts/capture-queries.ts",
+    "serve": "mcp-proxy --port 3103 --host 127.0.0.1 --apiKey \"$MCP_API_KEY\" -- node dist/index.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0",
+    "mcp-proxy": "^6.7.16",
     "zod": "^3.25.0"
   },
   "devDependencies": {

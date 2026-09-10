@@ -169,3 +169,24 @@ export function getCookieValue(
 ): string | undefined {
   return cookies.find((c) => c.name === name)?.value;
 }
+
+export function extractCookieHeaderCookies(cookieHeader: string): FacebookCookie[] {
+  return cookieHeader
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separator = entry.indexOf("=");
+      if (separator <= 0) return null;
+      return {
+        host: ".facebook.com",
+        name: entry.slice(0, separator).trim(),
+        value: entry.slice(separator + 1).trim(),
+        path: "/",
+        expires: 0,
+        secure: true,
+        httpOnly: true,
+      };
+    })
+    .filter((cookie): cookie is FacebookCookie => cookie !== null);
+}

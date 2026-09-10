@@ -1,0 +1,17 @@
+[Unit]
+Description=Facebook Marketplace MCP Server (via mcp-proxy)
+After=network.target
+
+[Service]
+Type=simple
+User=leonl
+WorkingDirectory=/home/leonl/hosted_projects/mcp/facebook-marketplace-mcp
+EnvironmentFile=/home/leonl/hosted_projects/mcp/facebook-marketplace-mcp/facebook-marketplace-mcp.env
+Environment="FACEBOOK_MARKETPLACE_DATA_DIR=/home/leonl/hosted_projects/mcp/facebook-marketplace-mcp/data"
+Environment="PATH=/home/leonl/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/leonl/.nvm/versions/node/v20.20.2/bin/node /home/leonl/hosted_projects/mcp/facebook-marketplace-mcp/node_modules/mcp-proxy/dist/bin/mcp-proxy.mjs --port 3103 --host 127.0.0.1 --apiKey ${MCP_API_KEY} -- /home/leonl/.nvm/versions/node/v20.20.2/bin/node /home/leonl/hosted_projects/mcp/facebook-marketplace-mcp/dist/index.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

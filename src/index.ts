@@ -6,6 +6,10 @@ import { FacebookClient } from "./facebook/client.js";
 import { searchListingsSchema, createSearchHandler } from "./tools/search.js";
 import { getListingSchema, createListingHandler } from "./tools/listing.js";
 import {
+  getListingImagesSchema,
+  createListingImagesHandler,
+} from "./tools/images.js";
+import {
   searchLocationSchema,
   createLocationHandler,
 } from "./tools/location.js";
@@ -44,6 +48,14 @@ server.tool(
   "Get full details for a specific Facebook Marketplace listing",
   getListingSchema,
   createListingHandler(client)
+);
+
+// Return Marketplace photos as MCP image content so vision-capable clients can inspect them.
+server.tool(
+  "get_listing_images",
+  "Return Facebook Marketplace listing photos as images for visual inspection. Call after search_listings or get_listing when you need to inspect condition, details, or authenticity.",
+  getListingImagesSchema,
+  createListingImagesHandler(client)
 );
 
 // Search for a location (get coordinates)

@@ -10,9 +10,8 @@ Facebook's web client makes all Marketplace requests as `POST /api/graphql/` wit
 
 ## Prerequisites
 
-- **macOS** (cookie extraction uses Keychain)
-- **Google Chrome** with an active Facebook login
 - **Node.js** 20+
+- Either **macOS** with Google Chrome and an active Facebook login, or an authenticated Facebook cookie header supplied through `FACEBOOK_COOKIE_HEADER`
 
 ## Installation
 
@@ -68,6 +67,16 @@ Get full details for a specific listing.
 |-----------|------|----------|-------------|
 | `listing_id` | string | yes | Marketplace listing ID |
 
+### `get_listing_images`
+
+Return a listing's photos as native MCP image content so vision-capable models can inspect them. This fetches only HTTPS Facebook CDN images, limits each image to 10 MB, and returns the first four photos by default.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `listing_id` | string | yes | Marketplace listing ID |
+| `image_numbers` | number[] | no | Specific 1-based photo numbers to return |
+| `max_images` | number | no | Photos to return when `image_numbers` is omitted (default: 4; max: 10) |
+
 ### `monitor_search`
 Save a search as a monitor to track new listings over time.
 
@@ -98,7 +107,36 @@ Delete a saved monitor.
 
 | Env Variable | Default | Description |
 |-------------|---------|-------------|
-| `CHROME_PROFILE` | `Default` | Chrome profile directory name |
+| `CHROME_PROFILE` | `Default` | Chrome profile directory name (macOS fallback only) |
+| `FACEBOOK_COOKIE_HEADER` | unset | Authenticated Facebook `Cookie` header. Required when hosted on Linux; must include `c_user` and be kept current. |
+| `FACEBOOK_MARKETPLACE_DATA_DIR` | `~/.fb-marketplace` | Directory for persistent monitor data. |
+| `MCP_API_KEY` | unset | Required by `npm run serve` to protect the loopback HTTP transport. |
+
+## Hosted Endpoint
+
+This repository is configured for the shared MCP gateway at:
+
+```text
+https://mcp.leibmann.org/marketplace
+```
+
+The gateway provides GitHub OAuth. The direct bearer-token route is available only to the local nginx configuration and is not intended for public use. On the host, populate `facebook-marketplace-mcp.env` with `FACEBOOK_COOKIE_HEADER` and `MCP_API_KEY`, then install and start `facebook-marketplace-mcp.service`.
+
+The shared `mcp-front` configuration also needs a `marketplace` server entry pointing at `http://127.0.0.1:3103/mcp` and matching `/marketplace` nginx routes, mirroring the `cronometer` routes. Keep the gateway bearer token in `mcp-front`'s private configuration; it must never be added here.
+
+For a host using the sibling projects in this workspace, add this private `mcp-front/config.json` entry:
+
+```json
+"marketplace": {
+  "url": "http://127.0.0.1:3103/mcp",
+  "transportType": "streamable-http",
+  "headers": {
+    "X-API-Key": "<private value matching MCP_API_KEY>"
+  }
+}
+```
+
+Then add exact and prefixed `/marketplace` nginx locations that follow the existing `/cronometer` pattern, changing only the service name and upstream port from `3102` to `3103`. Add `marketplace` to the two liveness server lists as well. These are host-specific changes and intentionally are not committed to this public repository.
 
 ## Updating GraphQL Queries
 
@@ -118,8 +156,7 @@ The server self-rate-limits to 3 requests/minute with random jitter to avoid det
 
 ## Limitations
 
-- **macOS only** for automatic cookie extraction
-- **Requires Chrome** with active Facebook session
+- Hosted deployments require a manually refreshed authenticated Facebook cookie header
 - **Facebook ToS** — automating Facebook violates their Terms of Service
 - **Fragile** — `doc_id` values change on Facebook deploys
 - **Rate limited** — aggressive use may trigger CAPTCHAs or account flags

@@ -2,5 +2,7 @@ node_modules/
 dist/
 .env
 .env.local
+facebook-marketplace-mcp.env
 *.db
 /tmp/
+data/

@@ -6,6 +6,7 @@ import type {
 } from "./types.js";
 import {
   extractChromeCookies,
+  extractCookieHeaderCookies,
   cookiesToHeader,
   getCookieValue,
 } from "./auth.js";
@@ -23,14 +24,14 @@ const GRAPHQL_URL = "https://www.facebook.com/api/graphql/";
 const MARKETPLACE_URL = "https://www.facebook.com/marketplace/";
 
 const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 
 const BROWSER_HEADERS: Record<string, string> = {
   "User-Agent": USER_AGENT,
   "Accept-Language": "en-US,en;q=0.9",
   "sec-ch-ua": '"Chromium";v="146", "Google Chrome";v="146", "Not?A_Brand";v="99"',
   "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"macOS"',
+  "sec-ch-ua-platform": '"Linux"',
   "sec-fetch-dest": "document",
   "sec-fetch-mode": "navigate",
   "sec-fetch-site": "none",
@@ -60,22 +61,31 @@ export class FacebookClient {
   }
 
   async initSession(): Promise<FacebookSession> {
-    const cookies = extractChromeCookies("facebook.com", this.chromeProfile);
+    const configuredCookieHeader = process.env.FACEBOOK_COOKIE_HEADER?.trim();
+    if (!configuredCookieHeader && process.platform !== "darwin") {
+      throw new Error(
+        "FACEBOOK_COOKIE_HEADER is required on non-macOS hosts. Export the Cookie header from an authenticated Facebook browser session."
+      );
+    }
+
+    const cookies = configuredCookieHeader
+      ? extractCookieHeaderCookies(configuredCookieHeader)
+      : extractChromeCookies("facebook.com", this.chromeProfile);
 
     if (cookies.length === 0) {
       throw new Error(
-        "No Facebook cookies found in Chrome. Make sure you're logged into Facebook in Chrome."
+        "No Facebook cookies found. Set FACEBOOK_COOKIE_HEADER or log into Facebook in Chrome."
       );
     }
 
     const userId = getCookieValue(cookies, "c_user");
     if (!userId) {
       throw new Error(
-        "No c_user cookie found. Make sure you're logged into Facebook in Chrome."
+        "No c_user cookie found. Set FACEBOOK_COOKIE_HEADER from an authenticated Facebook session or log into Facebook in Chrome."
       );
     }
 
-    const cookieHeader = cookiesToHeader(cookies);
+    const cookieHeader = configuredCookieHeader ?? cookiesToHeader(cookies);
 
     // Fetch marketplace page to extract tokens
     const tokens = await this.extractTokens(cookieHeader);
