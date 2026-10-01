@@ -30,7 +30,8 @@ export const readMessageThreadSchema = {
 };
 
 export const startSellerThreadSchema = {
-  seller_id: z.string().min(1).describe("Facebook ID of the Marketplace seller"),
+  seller_id: z.string().regex(/^[1-9]\d{0,18}$/).describe("Facebook ID of the Marketplace seller"),
+  listing_id: z.string().regex(/^[1-9]\d{0,18}$/).optional().describe("Required for first contact: Marketplace listing ID used to verify the seller"),
   message: messageSchema,
 };
 
@@ -50,7 +51,7 @@ export function createCheckMessagesHandler(client: FacebookClient) {
     try {
       const threads = await client.checkMessages(args.limit);
       if (threads.length === 0) {
-        return { content: [{ type: "text" as const, text: "No message threads found in the inbox." }] };
+        return { content: [{ type: "text" as const, text: "No threads found in the successfully loaded Marketplace folder." }] };
       }
       const text = threads
         .map((thread, index) => {
@@ -59,7 +60,7 @@ export function createCheckMessagesHandler(client: FacebookClient) {
           return `${index + 1}. **${thread.title || "Untitled thread"}**${unread}${people}\n   Thread ID: \`${thread.id}\` | ${formatTimestamp(thread.updatedAt)}\n   ${thread.snippet || "(no text preview)"}`;
         })
         .join("\n\n");
-      return { content: [{ type: "text" as const, text: `Recent message threads:\n\n${text}` }] };
+      return { content: [{ type: "text" as const, text: `Recent Marketplace message threads:\n\n${text}` }] };
     } catch (error) {
       return {
         content: [{ type: "text" as const, text: `Error checking messages: ${error instanceof Error ? error.message : String(error)}` }],
@@ -90,9 +91,9 @@ export function createReadMessageThreadHandler(client: FacebookClient) {
 }
 
 export function createStartSellerThreadHandler(client: FacebookClient) {
-  return async (args: { seller_id: string; message: string }) => {
+  return async (args: { seller_id: string; listing_id?: string; message: string }) => {
     try {
-      const result = await client.sendSellerMessage({ sellerId: args.seller_id, message: args.message });
+      const result = await client.sendSellerMessage({ sellerId: args.seller_id, listingId: args.listing_id, message: args.message });
       return {
         content: [{ type: "text" as const, text: `Message sent to seller ${args.seller_id}.${result.threadId ? ` Thread ID: \`${result.threadId}\`.` : ""}${result.messageId ? ` Message ID: \`${result.messageId}\`.` : ""}` }],
       };

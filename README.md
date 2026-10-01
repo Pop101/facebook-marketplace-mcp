@@ -174,3 +174,48 @@ The server self-rate-limits to 3 requests/minute with random jitter to avoid det
 - **Fragile** — `doc_id` values change on Facebook deploys
 - **Rate limited** — aggressive use may trigger CAPTCHAs or account flags
 - **No write operations** — search/read only, no messaging or listing creation
+
+## Messenger transport and validation
+
+Messaging uses the authenticated Facebook web client through Playwright, not the
+retired `/ajax/mercury/` endpoints. Facebook's client constructs its current
+GraphQL and Lightspeed WebSocket requests; the MCP projects the server's
+Lightspeed records into thread/message results. No fixed Messenger document ID
+is guessed or replayed for sending.
+
+Run `npx playwright install chromium` after installing dependencies. Messaging
+uses the dedicated `.fb-profile/` maintained by `scripts/refresh-session.ts`;
+`FACEBOOK_MESSENGER_PROFILE` can select a different authenticated dedicated
+profile. The browser account must match the Marketplace session. The profile
+must remain private and must not be committed. Browser operations are serialized
+inside each server process. A profile occupied by the session refresher or
+another process produces an explicit error, not an empty inbox.
+
+`check_messages` reads the actual Marketplace folder, not just the generic
+Messenger inbox. `read_message_thread` returns the recent messages loaded by the
+web client, up to the requested limit; it does not promise a complete historical
+export. Opening Messenger can mark the selected conversation read, so monitors
+should compare message IDs/timestamps rather than relying only on unread counts.
+Encrypted histories that are not available as plaintext fail explicitly.
+
+For first contact, supply both `listing_id` and `seller_id` to
+`start_seller_thread`. The seller is verified against the listing before any
+message is entered. A listing that already has a conversation should use
+`check_messages` followed by `send_thread_message` instead.
+
+Sends are reported successful only after correlated server confirmation. A
+transport/task acknowledgement alone is not delivery confirmation. An uncertain
+send must not be automatically retried: inspect the thread first to avoid a
+duplicate. New-contact and reply delivery need an explicitly authorized live
+recipient for end-to-end acceptance testing; the audit did not send test
+messages to sellers.
+
+Run `npm test` for the offline regression suite. It uses synthetic fixtures and
+no Facebook credentials, browser sessions, or real recipients. Live read-only
+checks additionally verified Marketplace folder discovery and thread history.
+
+GraphQL curl credentials and form bodies are passed through stdin, not process
+arguments; subprocess errors and invalid GraphQL responses omit raw private
+data. Environment files, browser profiles, HAR captures and key files are
+excluded by `.gitignore`. This is prevention, not proof that a secret was never
+exposed elsewhere.
