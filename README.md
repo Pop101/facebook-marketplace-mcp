@@ -1,6 +1,6 @@
 # Facebook Marketplace MCP Server
 
-An MCP server that provides access to Facebook Marketplace via direct GraphQL API calls. No browser automation at runtime — speaks Facebook's internal protocol directly.
+An MCP server for Facebook Marketplace. Listing search and details use direct GraphQL requests; messaging uses the authenticated Facebook web client through Playwright and observes its GraphQL/Lightspeed responses.
 
 ## How It Works
 
@@ -83,9 +83,9 @@ These tools use the authenticated Facebook session to work with Messenger. `star
 
 | Tool | Purpose |
 |------|---------|
-| `check_messages` | List recent inbox threads, including unread counts and thread IDs. |
+| `check_messages` | List recently loaded Marketplace conversations, including unread counts and thread IDs. |
 | `read_message_thread` | Read recent text messages in a thread. |
-| `start_seller_thread` | Open a direct thread with a seller ID and send the first message. Seller IDs are included in search/listing results when Facebook returns them. |
+| `start_seller_thread` | Send first contact for a verified `listing_id` and `seller_id`; existing conversations must use `send_thread_message`. |
 | `send_thread_message` | Send a message in an existing thread returned by `check_messages`. |
 
 The server reports an error when Facebook does not explicitly confirm a send; it does not present an unconfirmed write as successful.
@@ -165,7 +165,7 @@ This opens a browser, navigates Marketplace, and captures current query IDs. Upd
 
 ## Rate Limiting
 
-The server self-rate-limits to 3 requests/minute with random jitter to avoid detection. This means searches take a few seconds.
+Direct listing API requests are limited to 3 requests/minute with jitter. Browser messaging operations are serialized per server process, but the Facebook web client makes its own supporting network requests.
 
 ## Limitations
 
@@ -173,7 +173,7 @@ The server self-rate-limits to 3 requests/minute with random jitter to avoid det
 - **Facebook ToS** — automating Facebook violates their Terms of Service
 - **Fragile** — `doc_id` values change on Facebook deploys
 - **Rate limited** — aggressive use may trigger CAPTCHAs or account flags
-- **No write operations** — search/read only, no messaging or listing creation
+- **Outbound validation pending** — messaging write paths are implemented, but live delivery and never-contacted-seller flows have not passed end-to-end acceptance testing. No listing creation is supported.
 
 ## Messenger transport and validation
 

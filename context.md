@@ -2,11 +2,17 @@
 
 ## Architecture
 Direct GraphQL API replay using session cookies (FACEBOOK_COOKIE_HEADER in
-facebook-marketplace-mcp.env). All GraphQL/messaging POSTs go through
+facebook-marketplace-mcp.env). Direct listing GraphQL POSTs go through
 `bin/curl_chrome131` (curl-impersonate) because Facebook rejects plain
 fetch/curl POST fingerprints with error 1357054 even when the request body is
 byte-identical to the browser's. Page GETs (marketplace page, CDN images) are
 fine with plain fetch.
+
+Messaging instead uses `src/facebook/messenger.ts` and a dedicated authenticated
+Playwright profile. The Facebook web client constructs current GraphQL/Lightspeed
+requests; `src/facebook/lightspeed.ts` projects observed server responses. Reads
+were verified live; outbound delivery still needs an authorized acceptance test.
+See the README for encrypted-history, profile-lock, and read-receipt limitations.
 
 ## Session keep-alive (scripts/refresh-session.ts)
 - Persistent headless Chromium profile in `.fb-profile/` keeps the Facebook
