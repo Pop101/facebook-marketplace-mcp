@@ -1,6 +1,6 @@
 # Facebook Marketplace MCP Server
 
-An MCP server that provides access to Facebook Marketplace via direct GraphQL API calls. No browser automation at runtime — speaks Facebook's internal protocol directly.
+An MCP server for Facebook Marketplace. Listing search and details use direct GraphQL requests; messaging uses the authenticated Facebook web client through Playwright and observes its GraphQL/Lightspeed responses.
 
 ## How It Works
 
@@ -83,9 +83,9 @@ These tools use the authenticated Facebook session to work with Messenger. `star
 
 | Tool | Purpose |
 |------|---------|
-| `check_messages` | List recent inbox threads, including unread counts and thread IDs. |
+| `check_messages` | List recently loaded Marketplace conversations, including unread counts and thread IDs. |
 | `read_message_thread` | Read recent text messages in a thread. |
-| `start_seller_thread` | Open a direct thread with a seller ID and send the first message. Seller IDs are included in search/listing results when Facebook returns them. |
+| `start_seller_thread` | Send first contact for a verified `listing_id` and `seller_id`; existing conversations must use `send_thread_message`. |
 | `send_thread_message` | Send a message in an existing thread returned by `check_messages`. |
 
 The server reports an error when Facebook does not explicitly confirm a send; it does not present an unconfirmed write as successful.
@@ -165,7 +165,7 @@ This opens a browser, navigates Marketplace, and captures current query IDs. Upd
 
 ## Rate Limiting
 
-The server self-rate-limits to 3 requests/minute with random jitter to avoid detection. This means searches take a few seconds.
+Direct listing API requests are limited to 3 requests/minute with jitter. Browser messaging operations are serialized per server process, but the Facebook web client makes its own supporting network requests.
 
 ## Limitations
 
@@ -173,4 +173,49 @@ The server self-rate-limits to 3 requests/minute with random jitter to avoid det
 - **Facebook ToS** — automating Facebook violates their Terms of Service
 - **Fragile** — `doc_id` values change on Facebook deploys
 - **Rate limited** — aggressive use may trigger CAPTCHAs or account flags
-- **No write operations** — search/read only, no messaging or listing creation
+- **Outbound validation pending** — messaging write paths are implemented, but live delivery and never-contacted-seller flows have not passed end-to-end acceptance testing. No listing creation is supported.
+
+## Messenger transport and validation
+
+Messaging uses the authenticated Facebook web client through Playwright, not the
+retired `/ajax/mercury/` endpoints. Facebook's client constructs its current
+GraphQL and Lightspeed WebSocket requests; the MCP projects the server's
+Lightspeed records into thread/message results. No fixed Messenger document ID
+is guessed or replayed for sending.
+
+Run `npx playwright install chromium` after installing dependencies. Messaging
+uses the dedicated `.fb-profile/` maintained by `scripts/refresh-session.ts`;
+`FACEBOOK_MESSENGER_PROFILE` can select a different authenticated dedicated
+profile. The browser account must match the Marketplace session. The profile
+must remain private and must not be committed. Browser operations are serialized
+inside each server process. A profile occupied by the session refresher or
+another process produces an explicit error, not an empty inbox.
+
+`check_messages` reads the actual Marketplace folder, not just the generic
+Messenger inbox. `read_message_thread` returns the recent messages loaded by the
+web client, up to the requested limit; it does not promise a complete historical
+export. Opening Messenger can mark the selected conversation read, so monitors
+should compare message IDs/timestamps rather than relying only on unread counts.
+Encrypted histories that are not available as plaintext fail explicitly.
+
+For first contact, supply both `listing_id` and `seller_id` to
+`start_seller_thread`. The seller is verified against the listing before any
+message is entered. A listing that already has a conversation should use
+`check_messages` followed by `send_thread_message` instead.
+
+Sends are reported successful only after correlated server confirmation. A
+transport/task acknowledgement alone is not delivery confirmation. An uncertain
+send must not be automatically retried: inspect the thread first to avoid a
+duplicate. New-contact and reply delivery need an explicitly authorized live
+recipient for end-to-end acceptance testing; the audit did not send test
+messages to sellers.
+
+Run `npm test` for the offline regression suite. It uses synthetic fixtures and
+no Facebook credentials, browser sessions, or real recipients. Live read-only
+checks additionally verified Marketplace folder discovery and thread history.
+
+GraphQL curl credentials and form bodies are passed through stdin, not process
+arguments; subprocess errors and invalid GraphQL responses omit raw private
+data. Environment files, browser profiles, HAR captures and key files are
+excluded by `.gitignore`. This is prevention, not proof that a secret was never
+exposed elsewhere.

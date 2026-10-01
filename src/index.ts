@@ -110,21 +110,21 @@ server.tool(
 
 server.tool(
   "check_messages",
-  "Check recent Facebook Messenger inbox threads and identify unread seller replies. Use read_message_thread to inspect a thread.",
+  "Check the Marketplace folder for seller conversations using the current Messenger web client. Opening Messenger may mark its selected conversation read; compare timestamps, not only unread counts.",
   checkMessagesSchema,
   createCheckMessagesHandler(client)
 );
 
 server.tool(
   "read_message_thread",
-  "Read recent text messages in a Facebook Messenger thread.",
+  "Read recent messages in a Messenger thread. Opening a thread may mark it read. Unavailable encrypted history returns an explicit error.",
   readMessageThreadSchema,
   createReadMessageThreadHandler(client)
 );
 
 server.tool(
   "start_seller_thread",
-  "Open a Facebook Messenger thread with a Marketplace seller and send the first message. This action sends a real message.",
+  "Send the first message for a Marketplace listing. Supply listing_id and seller_id; the seller is verified against the listing. Sends a real message. Never automatically retry an uncertain send.",
   startSellerThreadSchema,
   createStartSellerThreadHandler(client)
 );
