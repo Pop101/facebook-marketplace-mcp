@@ -154,3 +154,10 @@ test('tool forwards listing ID rather than silently dropping it',async()=>{
   let received;const handler=createStartSellerThreadHandler({sendSellerMessage:async args=>{received=args;return {threadId:'101',messageId:'mid.1'};}});
   await handler({seller_id:'43',listing_id:'201',message:'hello'});assert.equal(received.listingId,'201');
 });
+
+
+test('first-contact schema requires the listing context used by the client',async()=>{
+  const {startSellerThreadSchema}=await import('../dist/tools/messages.js');
+  assert.equal(startSellerThreadSchema.listing_id.safeParse(undefined).success,false);
+  assert.equal(startSellerThreadSchema.listing_id.safeParse('201').success,true);
+});

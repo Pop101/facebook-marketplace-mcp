@@ -31,7 +31,7 @@ export const readMessageThreadSchema = {
 
 export const startSellerThreadSchema = {
   seller_id: z.string().regex(/^[1-9]\d{0,18}$/).describe("Facebook ID of the Marketplace seller"),
-  listing_id: z.string().regex(/^[1-9]\d{0,18}$/).optional().describe("Required for first contact: Marketplace listing ID used to verify the seller"),
+  listing_id: z.string().regex(/^[1-9]\d{0,18}$/).describe("Required for first contact: Marketplace listing ID used to verify the seller"),
   message: messageSchema,
 };
 
@@ -91,7 +91,7 @@ export function createReadMessageThreadHandler(client: FacebookClient) {
 }
 
 export function createStartSellerThreadHandler(client: FacebookClient) {
-  return async (args: { seller_id: string; listing_id?: string; message: string }) => {
+  return async (args: { seller_id: string; listing_id: string; message: string }) => {
     try {
       const result = await client.sendSellerMessage({ sellerId: args.seller_id, listingId: args.listing_id, message: args.message });
       return {
