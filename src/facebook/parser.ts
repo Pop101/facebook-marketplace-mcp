@@ -56,6 +56,100 @@ export function parseSearchResponse(data: unknown): SearchResult {
   }
 }
 
+export function parseListingDetailFromGraphQL(
+  data: unknown,
+  listingId: string
+): MarketplaceListingDetail {
+  // The PDP response contains several GroupCommerceProductItem copies; the
+  // fully-hydrated one is the node that carries both a title and a seller.
+  let best: any = null;
+  let bestScore = -1;
+  const visit = (node: any): void => {
+    if (node && typeof node === "object") {
+      const nodeId = String(node.id ?? "");
+      const entId = String(node.reportable_ent_id ?? "");
+      const productId = String(node.product_item?.id ?? "");
+      const matchesListing =
+        nodeId === String(listingId) ||
+        entId === String(listingId) ||
+        productId === String(listingId);
+      if (typeof node.marketplace_listing_title === "string" && matchesListing) {
+        const score = Object.keys(node).length;
+        if (score > bestScore) {
+          best = node;
+          bestScore = score;
+        }
+      }
+      for (const value of Object.values(node)) {
+        if (value && typeof value === "object") visit(value);
+      }
+    }
+  };
+  visit(data);
+
+  if (!best) {
+    throw new Error(`Listing ${listingId} not found in PDP response`);
+  }
+
+  const detail: MarketplaceListingDetail = {
+    id:
+      String(best.reportable_ent_id ?? "") === String(listingId)
+        ? String(best.reportable_ent_id)
+        : String(best.product_item?.id ?? "") === String(listingId)
+          ? String(best.product_item.id)
+          : String(best.id ?? listingId),
+    title: best.marketplace_listing_title ?? "",
+    description: best.redacted_description?.text ?? "",
+    price:
+      best.listing_price?.formatted_amount_zeros_stripped ??
+      best.listing_price?.formatted_amount ??
+      best.listing_price?.amount ??
+      "N/A",
+    location:
+      best.location_text?.text ??
+      best.location?.reverse_geocode?.city_page?.display_name ??
+      best.location?.reverse_geocode?.city ??
+      "Unknown",
+    imageUrl: best.primary_listing_photo?.image?.uri ?? "",
+    images: [],
+    sellerId: best.marketplace_listing_seller?.id ?? "",
+    sellerName: best.marketplace_listing_seller?.name ?? "Unknown",
+    postedDate: best.creation_time
+      ? new Date(best.creation_time * 1000).toISOString()
+      : "",
+    url: `https://www.facebook.com/marketplace/item/${listingId}/`,
+    isPending: best.is_pending ?? false,
+    condition: best.condition ?? "",
+    seller: {
+      id: best.marketplace_listing_seller?.id ?? "",
+      name: best.marketplace_listing_seller?.name ?? "Unknown",
+      profileUrl: best.marketplace_listing_seller?.id
+        ? `https://www.facebook.com/profile.php?id=${best.marketplace_listing_seller.id}`
+        : "",
+    },
+  };
+  return detail;
+}
+
+export function parseListingPhotosFromMediaResponse(data: unknown): string[] {
+  const uris: string[] = [];
+  const visit = (node: any): void => {
+    if (node && typeof node === "object") {
+      if (Array.isArray(node.listing_photos)) {
+        for (const photo of node.listing_photos) {
+          const uri = photo?.image?.uri;
+          if (typeof uri === "string" && !uris.includes(uri)) uris.push(uri);
+        }
+      }
+      for (const value of Object.values(node)) {
+        if (value && typeof value === "object") visit(value);
+      }
+    }
+  };
+  visit(data);
+  return uris;
+}
+
 export function parseListingDetailFromPage(
   html: string,
   listingId: string

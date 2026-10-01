@@ -16,11 +16,25 @@ import {
   MARKETPLACE_SEARCH_DOC_ID,
   LOCATION_SEARCH_DOC_ID,
   LISTING_DETAIL_DOC_ID,
+  PDP_MEDIA_DOC_ID,
   buildSearchVariables,
+  buildListingDetailVariables,
+  buildListingMediaVariables,
   buildLocationSearchVariables,
 } from "./queries.js";
-import { parseSearchResponse, parseListingDetailFromPage } from "./parser.js";
+import {
+  parseSearchResponse,
+  parseListingDetailFromGraphQL,
+  parseListingPhotosFromMediaResponse,
+  parseListingDetailFromPage,
+} from "./parser.js";
 import { RateLimiter } from "../utils/rate-limit.js";
+import { execFile } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const CURL_IMPERSONATE = path.join(PROJECT_ROOT, "bin", "curl_chrome131");
 
 const GRAPHQL_URL = "https://www.facebook.com/api/graphql/";
 const MARKETPLACE_URL = "https://www.facebook.com/marketplace/";
@@ -159,9 +173,44 @@ export class FacebookClient {
     return { fbDtsg, lsd, jazoest, clientRevision };
   }
 
+  /**
+   * POST through curl-impersonate (Chrome TLS fingerprint). Facebook rejects
+   * GraphQL POSTs from plain fetch/curl with error 1357054 — the request body
+   * is identical either way, only the TLS/HTTP fingerprint differs.
+   */
+  private impersonatedPost(
+    url: string,
+    headers: Record<string, string>,
+    body: string
+  ): Promise<{ status: number; text: string }> {
+    return new Promise((resolve, reject) => {
+      const args = ["-sS", "-X", "POST", url];
+      for (const [k, v] of Object.entries(headers)) {
+        if (k.toLowerCase() === "user-agent") continue; // let the impersonation target set its matching UA
+        args.push("-H", `${k}: ${v}`);
+      }
+      args.push("--data-binary", "@-", "-w", "\n%{http_code}");
+      const child = execFile(
+        CURL_IMPERSONATE,
+        args,
+        { maxBuffer: 32 * 1024 * 1024 },
+        (err, stdout) => {
+          if (err) return reject(err);
+          const idx = stdout.lastIndexOf("\n");
+          resolve({
+            status: parseInt(stdout.slice(idx + 1).trim(), 10),
+            text: stdout.slice(0, idx),
+          });
+        }
+      );
+      child.stdin?.end(body);
+    });
+  }
+
   private async graphqlRequest(
     docId: string,
-    variables: Record<string, unknown>
+    variables: Record<string, unknown>,
+    friendlyName?: string
   ): Promise<unknown> {
     const session = await this.ensureSession();
     await this.rateLimiter.wait();
@@ -179,34 +228,34 @@ export class FacebookClient {
       __rev: session.clientRevision,
     });
 
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: {
-        ...BROWSER_HEADERS,
-        Cookie: session.cookieHeader,
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "*/*",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        Origin: "https://www.facebook.com",
-        Referer: "https://www.facebook.com/marketplace/",
-        "X-FB-LSD": session.lsd,
-      },
-      body: body.toString(),
-    });
+    const headers: Record<string, string> = {
+      ...BROWSER_HEADERS,
+      Cookie: session.cookieHeader,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "*/*",
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      Origin: "https://www.facebook.com",
+      Referer: "https://www.facebook.com/marketplace/",
+      "X-FB-LSD": session.lsd,
+      "X-ASBD-ID": "359341",
+    };
+    if (friendlyName) headers["X-FB-Friendly-Name"] = friendlyName;
 
-    if (res.status === 401 || res.status === 403) {
+    const { status, text: rawText } = await this.impersonatedPost(GRAPHQL_URL, headers, body.toString());
+
+    if (status === 401 || status === 403) {
       // Session expired — clear and retry once
       this.session = null;
       throw new Error("Session expired. Re-initializing on next request.");
     }
 
-    if (!res.ok) {
-      throw new Error(`GraphQL request failed: ${res.status} ${res.statusText}`);
+    if (status !== 200) {
+      throw new Error(`GraphQL request failed: ${status}`);
     }
 
-    let text = await res.text();
+    let text = rawText;
 
     // Strip Facebook's anti-JSONP prefix
     const jsonStart = text.indexOf("{");
@@ -215,9 +264,19 @@ export class FacebookClient {
     }
 
     try {
-      return JSON.parse(text);
-    } catch {
-      throw new Error(`Failed to parse GraphQL response: ${text.slice(0, 200)}`);
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      // HTTP 200 with an error payload (e.g. 1357054) instead of data
+      if (typeof parsed.error === "number") {
+        throw new Error(
+          `Facebook GraphQL error ${parsed.error}: ${String(parsed.errorSummary ?? "unknown")} — ${String(parsed.errorDescription ?? "")}`
+        );
+      }
+      return parsed;
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        throw new Error(`Failed to parse GraphQL response: ${text.slice(0, 200)}`);
+      }
+      throw e;
     }
   }
 
@@ -239,9 +298,9 @@ export class FacebookClient {
       jazoest: session.jazoest,
       lsd: session.lsd,
     });
-    const res = await fetch(new URL(path, FACEBOOK_URL), {
-      method: "POST",
-      headers: {
+    const { status, text } = await this.impersonatedPost(
+      new URL(path, FACEBOOK_URL).toString(),
+      {
         ...BROWSER_HEADERS,
         Cookie: session.cookieHeader,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -254,33 +313,51 @@ export class FacebookClient {
         Referer: "https://www.facebook.com/messages/",
         "X-FB-LSD": session.lsd,
       },
-      body: body.toString(),
-    });
+      body.toString()
+    );
 
-    if (res.status === 401 || res.status === 403) {
+    if (status === 401 || status === 403) {
       this.clearSession();
       throw new Error("Session expired. Re-initializing on next request.");
     }
-    if (!res.ok) {
-      throw new Error(`Facebook messaging request failed: ${res.status} ${res.statusText}`);
+    if (status !== 200) {
+      throw new Error(`Facebook messaging request failed: ${status}`);
     }
-    return parseFacebookResponse(await res.text());
+    return parseFacebookResponse(text);
   }
 
   async searchListings(params: SearchParams): Promise<SearchResult> {
     const variables = buildSearchVariables(params);
-    const data = await this.graphqlRequest(MARKETPLACE_SEARCH_DOC_ID, variables);
+    const data = await this.graphqlRequest(MARKETPLACE_SEARCH_DOC_ID, variables, "CometMarketplaceSearchContentPaginationQuery");
     return parseSearchResponse(data);
   }
 
   async getListingDetail(listingId: string): Promise<MarketplaceListingDetail> {
-    // If we have a doc_id for listing detail, use GraphQL
+    // Primary path: replay the PDP GraphQL query, then the media-viewer query
+    // for the full photo set.
     if (LISTING_DETAIL_DOC_ID) {
-      const data = await this.graphqlRequest(LISTING_DETAIL_DOC_ID, {
-        targetId: listingId,
-      });
-      // Parse response (would need a dedicated parser)
-      return data as MarketplaceListingDetail;
+      const data = await this.graphqlRequest(
+        LISTING_DETAIL_DOC_ID,
+        buildListingDetailVariables(listingId),
+        "MarketplacePDPContainerQuery"
+      );
+      const detail = parseListingDetailFromGraphQL(data, listingId);
+
+      try {
+        const mediaData = await this.graphqlRequest(
+          PDP_MEDIA_DOC_ID,
+          buildListingMediaVariables(listingId),
+          "MarketplacePDPC2CMediaViewerWithImagesQuery"
+        );
+        detail.images = parseListingPhotosFromMediaResponse(mediaData);
+        if (!detail.imageUrl && detail.images.length > 0) {
+          detail.imageUrl = detail.images[0];
+        }
+      } catch {
+        // Photos are best-effort; detail data stands on its own.
+      }
+
+      return detail;
     }
 
     // Fallback: fetch the listing page directly and parse embedded data
@@ -310,7 +387,7 @@ export class FacebookClient {
     query: string
   ): Promise<Array<{ name: string; latitude: number; longitude: number }>> {
     const variables = buildLocationSearchVariables(query);
-    const data = await this.graphqlRequest(LOCATION_SEARCH_DOC_ID, variables);
+    const data = await this.graphqlRequest(LOCATION_SEARCH_DOC_ID, variables, "CometMarketplaceLocationTypeaheadDataSourceQuery");
 
     try {
       const results = (data as any)?.data?.city_street_search?.street_results?.edges ?? [];

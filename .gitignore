@@ -6,3 +6,7 @@ facebook-marketplace-mcp.env
 *.db
 /tmp/
 data/
+.fb-profile/
+fb-login.env
+facebook-marketplace-mcp.env
+bin/
