@@ -60,3 +60,19 @@ See the README for encrypted-history, profile-lock, and read-receipt limitations
 - AES-128-CBC, PBKDF2 with SHA-1, salt="saltysalt", 1003 iterations
 - Key from Keychain: `security find-generic-password -w -s "Chrome Safe Storage" -a "Chrome"`
 - IV: 16 space characters, encrypted values prefixed with "v10"
+
+## Search coverage (October 2026 audit)
+- `search_listings` exposes `cursor`, `max_pages` (1-5, default 1), and
+  `delivery_method` (new searches default to pickup). `limit` is a page-size hint,
+  not a guaranteed total. Full pages are retained to prevent continuation gaps.
+- Client pagination deduplicates IDs and guards cursor cycles. First-page parse
+  failures are errors; later failures preserve partial data and the retry cursor.
+- Structured and text output expose page count, next cursor, stop reason, skipped
+  feed units, and unknown location/delivery facts. Saved monitor checks disclose
+  bounded coverage too. Exhaustion is query-specific, never global inventory.
+- Search broad and model-specific variants before recommending. Inspect candidate
+  listings and photos. Facebook supplies city names, not verified distances, and
+  may broaden search geography even for pickup. Do not claim radius enforcement.
+- `npm test` covers synthetic page-two bargains, continuation, cursor cycles,
+  malformed/empty responses, delivery scope, and unknown data. CI runs on Node
+  20 and 22. Live acceptance must use read-only searches, not seller messages.

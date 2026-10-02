@@ -1,59 +1,98 @@
+import { z } from "zod";
 import type {
   MarketplaceListing,
   MarketplaceListingDetail,
-  SearchResult,
+  SearchPage,
 } from "./types.js";
 
-export function parseSearchResponse(data: unknown): SearchResult {
-  try {
-    const root = data as any;
-    const feedUnits =
-      root?.data?.marketplace_search?.feed_units ??
-      root?.data?.marketplace_search?.feed_units;
+// Validate the search envelope instead of converting integration failures to zero matches.
+const searchListingSchema = z.object({
+  id: z.string().regex(/^[1-9]\d*$/),
+  marketplace_listing_title: z.string().min(1),
+  listing_price: z.object({
+    formatted_amount: z.string().nullish(),
+    amount: z.union([z.string(), z.number()]).nullish(),
+  }).nullish(),
+  location: z.object({
+    reverse_geocode: z.object({
+      city_page: z.object({display_name: z.string().nullish()}).nullish(),
+      city: z.string().nullish(),
+      state: z.string().nullish(),
+    }).nullish(),
+  }).nullish(),
+  primary_listing_photo: z.object({
+    image: z.object({uri: z.string().nullish()}).nullish(),
+  }).nullish(),
+  marketplace_listing_seller: z.object({
+    id: z.string().nullish(),
+    name: z.string().nullish(),
+  }).nullish(),
+  creation_time: z.union([z.number(), z.string()]).nullish(),
+  delivery_types: z.array(z.string()).nullish(),
+  is_pending: z.boolean().nullish(),
+  is_sold: z.boolean().nullish(),
+});
 
-    if (!feedUnits) {
-      return { listings: [], hasNextPage: false, endCursor: null };
-    }
+const searchResponseSchema = z.object({
+  data: z.object({
+    marketplace_search: z.object({
+      feed_units: z.object({
+        edges: z.array(z.object({
+          node: z.object({listing: searchListingSchema.nullish()}).nullable(),
+        })),
+        page_info: z.object({
+          has_next_page: z.boolean(),
+          end_cursor: z.string().min(1).nullish(),
+        }),
+      }),
+    }),
+  }),
+});
 
-    const edges = feedUnits.edges ?? [];
-    const pageInfo = feedUnits.page_info ?? {};
-
-    const listings: MarketplaceListing[] = edges
-      .map((edge: any) => {
-        const listing = edge?.node?.listing;
-        if (!listing) return null;
-
-        return {
-          id: listing.id ?? "",
-          title: listing.marketplace_listing_title ?? "",
-          price:
-            listing.listing_price?.formatted_amount ??
-            listing.listing_price?.amount ??
-            "N/A",
-          location:
-            listing.location?.reverse_geocode?.city_page?.display_name ??
-            listing.location?.reverse_geocode?.city ??
-            "Unknown",
-          imageUrl: listing.primary_listing_photo?.image?.uri ?? "",
-          sellerId: listing.marketplace_listing_seller?.id ?? "",
-          sellerName: listing.marketplace_listing_seller?.name ?? "Unknown",
-          postedDate: listing.creation_time
-            ? new Date(listing.creation_time * 1000).toISOString()
-            : "",
-          url: `https://www.facebook.com/marketplace/item/${listing.id}/`,
-          isPending: listing.is_pending ?? false,
-        };
-      })
-      .filter(Boolean) as MarketplaceListing[];
-
-    return {
-      listings,
-      hasNextPage: pageInfo.has_next_page ?? false,
-      endCursor: pageInfo.end_cursor ?? null,
-    };
-  } catch {
-    return { listings: [], hasNextPage: false, endCursor: null };
+export function parseSearchResponse(data: unknown): SearchPage {
+  const parsed = searchResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    // Never echo raw response values or Zod issues: they may contain private data.
+    throw new Error("Invalid Marketplace search response; this is not a confirmed empty search.");
   }
+  const feed = parsed.data.data.marketplace_search.feed_units;
+  if (feed.page_info.has_next_page && !feed.page_info.end_cursor) {
+    throw new Error("Invalid Marketplace search response: another page was indicated without a cursor.");
+  }
+
+  const listings: MarketplaceListing[] = [];
+  let skippedFeedUnits = 0;
+  for (const edge of feed.edges) {
+    const listing = edge.node?.listing;
+    if (!listing) {
+      skippedFeedUnits++;
+      continue;
+    }
+    const millis = Number(listing.creation_time) * 1000;
+    const validDate = listing.creation_time != null && listing.creation_time !== ""
+      && Number.isFinite(millis) && Math.abs(millis) <= 8.64e15;
+    const geo = listing.location?.reverse_geocode;
+    listings.push({
+      id: listing.id,
+      title: listing.marketplace_listing_title,
+      price: String(listing.listing_price?.formatted_amount ?? listing.listing_price?.amount ?? "N/A"),
+      location: geo?.city_page?.display_name ?? ([geo?.city, geo?.state].filter(Boolean).join(", ") || "Unknown"),
+      imageUrl: listing.primary_listing_photo?.image?.uri ?? "",
+      sellerId: listing.marketplace_listing_seller?.id ?? "",
+      sellerName: listing.marketplace_listing_seller?.name ?? "Unknown",
+      postedDate: validDate ? new Date(millis).toISOString() : "",
+      url: `https://www.facebook.com/marketplace/item/${listing.id}/`,
+      isPending: listing.is_pending ?? false,
+      isSold: listing.is_sold ?? undefined,
+      deliveryTypes: listing.delivery_types ?? undefined,
+    });
+  }
+  return {
+    listings,
+    hasNextPage: feed.page_info.has_next_page,
+    endCursor: feed.page_info.has_next_page ? feed.page_info.end_cursor! : null,
+    skippedFeedUnits,
+  };
 }
 
 export function parseListingDetailFromGraphQL(

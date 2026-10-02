@@ -29,6 +29,8 @@ export interface MarketplaceListing {
   postedDate: string;
   url: string;
   isPending: boolean;
+  isSold?: boolean;
+  deliveryTypes?: string[];
 }
 
 export interface MarketplaceListingDetail extends MarketplaceListing {
@@ -68,12 +70,22 @@ export interface SearchParams {
   category?: string;
   limit: number;
   cursor?: string;
+  maxPages?: number;
+  deliveryMethod?: "local_pickup" | "shipping" | "all";
 }
 
-export interface SearchResult {
+export interface SearchPage {
   listings: MarketplaceListing[];
   hasNextPage: boolean;
   endCursor: string | null;
+  skippedFeedUnits: number;
+}
+
+export interface SearchResult extends SearchPage {
+  pagesFetched: number;
+  stopReason: "exhausted" | "page_limit" | "cursor_repeated" | "page_error";
+  excludedListings: number;
+  warnings: string[];
 }
 
 export interface SavedMonitor {

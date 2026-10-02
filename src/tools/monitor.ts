@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchListingsSchema, formatSearchCoverage } from "./search.js";
 import type { FacebookClient } from "../facebook/client.js";
 import {
   addMonitor,
@@ -8,16 +9,13 @@ import {
   deleteMonitor,
 } from "../storage/monitors.js";
 
+const {cursor: _cursor, ...savedSearchFields} = searchListingsSchema;
 export const monitorSearchSchema = {
-  name: z.string().describe("Name for this saved search monitor"),
-  query: z.string().describe("Search query"),
-  latitude: z.number().describe("Latitude of search center"),
-  longitude: z.number().describe("Longitude of search center"),
-  radius_km: z.number().default(50).describe("Search radius in km"),
-  min_price: z.number().optional().describe("Min price filter in dollars"),
-  max_price: z.number().optional().describe("Max price filter in dollars"),
-  category: z.string().optional().describe("Category ID"),
+  name: z.string().trim().min(1).describe("Name for this saved search monitor"),
+  ...savedSearchFields,
+  limit: searchListingsSchema.limit.default(24),
 };
+const monitorArguments = z.object(monitorSearchSchema);
 
 export const checkMonitorsSchema = {
   monitor_name: z
@@ -33,17 +31,14 @@ export const deleteMonitorSchema = {
 export const listMonitorsSchema = {};
 
 export function createMonitorSearchHandler() {
-  return async (args: {
-    name: string;
-    query: string;
-    latitude: number;
-    longitude: number;
-    radius_km: number;
-    min_price?: number;
-    max_price?: number;
-    category?: string;
-  }) => {
+  return async (input: z.input<typeof monitorArguments>) => {
     try {
+      const parsed = monitorArguments.safeParse(input);
+      if (!parsed.success) throw new Error("Invalid monitor search arguments.");
+      const args = parsed.data;
+      if (args.min_price !== undefined && args.max_price !== undefined && args.min_price > args.max_price) {
+        throw new Error("min_price must not exceed max_price.");
+      }
       const monitor = addMonitor(args.name, {
         query: args.query,
         latitude: args.latitude,
@@ -52,14 +47,16 @@ export function createMonitorSearchHandler() {
         minPrice: args.min_price,
         maxPrice: args.max_price,
         category: args.category,
-        limit: 24,
+        limit: args.limit,
+        maxPages: args.max_pages,
+        deliveryMethod: args.delivery_method,
       });
 
       return {
         content: [
           {
             type: "text" as const,
-            text: `Monitor "${monitor.name}" saved.\nID: ${monitor.id}\nQuery: "${args.query}" within ${args.radius_km}km\nUse check_monitors to check for new listings.`,
+            text: `Monitor "${monitor.name}" saved.\nID: ${monitor.id}\nQuery: "${args.query}"; requested radius: ${args.radius_km}km\nUse check_monitors to check for new listings.`,
           },
         ],
       };
@@ -98,11 +95,13 @@ export function createCheckMonitorsHandler(client: FacebookClient) {
       }
 
       const results: string[] = [];
+      let hadPageError = false;
 
       for (const monitor of monitors) {
         if (!monitor) continue;
 
         const searchResult = await client.searchListings(monitor.params);
+        hadPageError ||= searchResult.stopReason === "page_error" || searchResult.stopReason === "cursor_repeated";
         const newListings = searchResult.listings.filter(
           (l) => !monitor.seenIds.includes(l.id)
         );
@@ -125,12 +124,14 @@ export function createCheckMonitorsHandler(client: FacebookClient) {
           );
         } else {
           updateMonitorSeenIds(monitor.name, []);
-          results.push(`### ${monitor.name} — no new listings`);
+          results.push(`### ${monitor.name} — no new listings in the scanned pages`);
         }
+        results.push(`Query: ${monitor.params.query}; delivery requested: ${monitor.params.deliveryMethod ?? "all"}.\n${formatSearchCoverage(searchResult)}\nDistance remains unverified; check each displayed location. This is a bounded scan, not a complete inventory check.`);
       }
 
       return {
         content: [{ type: "text" as const, text: results.join("\n\n---\n\n") }],
+        isError: hadPageError,
       };
     } catch (error) {
       return {

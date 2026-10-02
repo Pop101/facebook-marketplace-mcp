@@ -42,12 +42,14 @@ const client = new FacebookClient({
 const server = new McpServer({
   name: "facebook-marketplace",
   version: "1.0.0",
+}, {
+  instructions: "Marketplace search is query-dependent and paginated, not a complete inventory. Search broad and model-specific variants, deduplicate by listing ID, and follow next_cursor with unchanged filters. Disclose stop_reason and incomplete coverage. Local pickup is a delivery option, not a verified distance: check displayed locations. Inspect candidate details/photos before comparing models or condition. Never interpret tool errors as zero matches.",
 });
 
 // Search listings
 server.tool(
   "search_listings",
-  "Search Facebook Marketplace listings by query, location, and filters",
+  "Search Marketplace with explicit cursor pagination and delivery scope. Defaults to one page; set max_pages for a bounded scan. Read next_cursor, stop_reason and warnings; search model/name variants before recommending. Results may be irrelevant or outside the requested radius; verify displayed locations.",
   searchListingsSchema,
   createSearchHandler(client)
 );

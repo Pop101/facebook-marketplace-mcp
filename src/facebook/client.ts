@@ -2,6 +2,7 @@ import type {
   FacebookSession,
   SearchParams,
   SearchResult,
+  SearchPage,
   MarketplaceListingDetail,
   MarketplaceMessage,
   MessageThread,
@@ -245,9 +246,72 @@ export class FacebookClient {
   }
 
   async searchListings(params: SearchParams): Promise<SearchResult> {
-    const variables = buildSearchVariables(params);
-    const data = await this.graphqlRequest(MARKETPLACE_SEARCH_DOC_ID, variables, "CometMarketplaceSearchContentPaginationQuery");
-    return parseSearchResponse(data);
+    const maxPages = params.maxPages ?? 1;
+    if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 5
+      || !Number.isInteger(params.limit) || params.limit < 1 || params.limit > 100) {
+      throw new Error("Search requires maxPages from 1 to 5 and a page-size limit from 1 to 100.");
+    }
+    const result: SearchResult = {
+      listings: [], hasNextPage: true, endCursor: params.cursor ?? null,
+      pagesFetched: 0, stopReason: "page_limit", skippedFeedUnits: 0,
+      excludedListings: 0, warnings: [],
+    };
+    let cursor = params.cursor;
+    const cursors = new Set(cursor ? [cursor] : []);
+    const listingIds = new Set<string>();
+
+    for (let i = 0; i < maxPages; i++) {
+      let page: SearchPage;
+      try {
+        const data = await this.graphqlRequest(
+          MARKETPLACE_SEARCH_DOC_ID, buildSearchVariables({...params, cursor}),
+          "CometMarketplaceSearchContentPaginationQuery"
+        );
+        page = parseSearchResponse(data);
+      } catch (error) {
+        if (result.pagesFetched === 0) throw error;
+        result.stopReason = "page_error";
+        result.endCursor = cursor ?? null;
+        result.warnings.push("A later page failed. Earlier listings are partial; retry next_cursor with the same query and filters.");
+        break;
+      }
+      result.pagesFetched++;
+      result.skippedFeedUnits += page.skippedFeedUnits;
+      for (const listing of page.listings) {
+        if (listingIds.has(listing.id)) continue;
+        listingIds.add(listing.id);
+        if (params.deliveryMethod === "local_pickup" && listing.deliveryTypes?.length
+          && listing.deliveryTypes.every(method => method === "SHIPPING")) {
+          result.excludedListings++;
+          continue;
+        }
+        result.listings.push(listing);
+      }
+      result.hasNextPage = page.hasNextPage;
+      result.endCursor = page.endCursor;
+      if (!page.hasNextPage) {
+        result.stopReason = "exhausted";
+        break;
+      }
+      if (cursors.has(page.endCursor!)) {
+        result.stopReason = "cursor_repeated";
+        result.endCursor = null;
+        result.warnings.push("Facebook repeated a cursor. Stopped to prevent a loop; coverage is incomplete. Retry a different query or restart the search.");
+        break;
+      }
+      cursor = page.endCursor!;
+      cursors.add(cursor);
+    }
+    if (result.stopReason === "page_limit") {
+      result.warnings.push("Page budget reached; more results remain. Continue with next_cursor and unchanged query/filters before making a complete comparison.");
+    }
+    if (result.skippedFeedUnits) {
+      result.warnings.push(`${result.skippedFeedUnits} feed unit(s) contained no listing and were not included.`);
+    }
+    if (result.excludedListings) {
+      result.warnings.push(`${result.excludedListings} explicitly shipping-only listing(s) were excluded.`);
+    }
+    return result;
   }
 
   async getListingDetail(listingId: string): Promise<MarketplaceListingDetail> {
