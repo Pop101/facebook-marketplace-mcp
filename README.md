@@ -47,18 +47,53 @@ Or add to your Claude Code config manually:
 ## Tools
 
 ### `search_listings`
-Search Marketplace by query, location, and filters.
+Search Marketplace by query, location, and explicit delivery scope. The default is one page; pagination is exposed rather than hidden.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | yes | Search term |
 | `latitude` | number | yes | Latitude of search center |
 | `longitude` | number | yes | Longitude of search center |
-| `radius_km` | number | no | Search radius (default: 50) |
+| `radius_km` | number | no | Requested radius (default: 50); distance is unverified |
 | `min_price` | number | no | Min price in dollars |
 | `max_price` | number | no | Max price in dollars |
 | `category` | string | no | Category ID |
-| `limit` | number | no | Max results (default: 20) |
+| `limit` | number | no | Requested page size, 1-100 (default: 20); Facebook may return fewer or more |
+| `cursor` | string | no | Opaque `next_cursor` from the previous result, passed unchanged with the same query and filters |
+| `max_pages` | number | no | Bounded automatic pagination, 1-5 pages (default: 1) |
+| `delivery_method` | string | no | `local_pickup` (default), `shipping`, or `all` |
+
+Results include both readable text and `structuredContent`: listing IDs, seller IDs,
+prices, locations, available posting dates, raw delivery types, pending/sold status,
+`pages_fetched`, `has_next_page`, `next_cursor`, `stop_reason`, and warnings. Missing
+dates/delivery data are explicitly unknown, not inferred. Complete pages are never
+truncated to `limit`: advancing the cursor after dropping extra results would lose
+those listings. Duplicate IDs are removed within a call; callers should also dedupe
+across continuations and query variants.
+
+`stop_reason` is one of:
+- `page_limit`: the page budget was reached; continue using `next_cursor`.
+- `exhausted`: Facebook reports no more pages for **this query**, not a complete
+  search of every relevant listing on Marketplace.
+- `cursor_repeated`: pagination stopped because a cursor repeated; returned data
+  are partial and no usable continuation is claimed.
+- `page_error`: a later request failed; earlier results and the retry cursor are
+  retained. Both this and `cursor_repeated` set MCP `isError: true`.
+
+A malformed first response is a tool error, never "No listings found". Non-listing
+feed units are counted and disclosed. Empty pages with advancing cursors are not
+considered exhausted. The single-page default keeps normal calls short under the
+existing 3-request/minute rate limit; multi-page calls may take several minutes.
+
+**Search workflow:** use a broad name and specific model/name variants, follow
+continuations to the desired budget, dedupe by listing ID, then inspect candidate
+details/photos. State any coverage limits before recommending or ruling out options.
+
+**Locality:** pickup versus shipping is sent to Facebook. In pickup mode, listings
+with explicit shipping-only delivery are excluded. Unknown delivery remains labeled
+unknown. The current search response supplies city names but not listing coordinates;
+Facebook can broaden geography. Therefore distance is always marked **unverified**:
+check the displayed location rather than claiming every result is within the radius.
 
 ### `get_listing`
 Get full details for a specific listing.
@@ -102,6 +137,16 @@ Save a search as a monitor to track new listings over time.
 | `radius_km` | number | no | Radius (default: 50) |
 | `min_price` | number | no | Min price |
 | `max_price` | number | no | Max price |
+| `category` | string | no | Category ID |
+| `limit` | number | no | Requested page size (default: 24) |
+| `max_pages` | number | no | Page budget, 1-5 (default: 1) |
+| `delivery_method` | string | no | `local_pickup` (default), `shipping`, or `all` |
+
+Monitor checks show continuation and partial-coverage warnings, including when no
+new listings appeared in the scanned pages. Legacy monitors without a delivery
+setting retain their previous `all` behavior. Successful pages can contribute seen
+IDs even when a later page fails; last-checked time does not certify exhaustive
+coverage.
 
 ### `check_monitors`
 Check monitors for new listings since last check.

@@ -1,3 +1,5 @@
+import type { SearchParams } from "./types.js";
+
 // Known GraphQL doc_ids for Facebook Marketplace.
 // These are hashed operation identifiers that Facebook rotates on deploys.
 // Run `npm run capture-queries` to discover current values if these break.
@@ -45,17 +47,7 @@ export function buildListingMediaVariables(listingId: string) {
   return { targetId: listingId };
 }
 
-export function buildSearchVariables(params: {
-  query: string;
-  latitude: number;
-  longitude: number;
-  radiusKm: number;
-  minPrice?: number;
-  maxPrice?: number;
-  category?: string;
-  limit: number;
-  cursor?: string;
-}) {
+export function buildSearchVariables(params: SearchParams) {
   const variables: Record<string, unknown> = {
     count: params.limit,
     params: {
@@ -64,19 +56,19 @@ export function buildSearchVariables(params: {
         query: params.query,
       },
       browse_request_params: {
-        commerce_enable_local_pickup: true,
-        commerce_enable_shipping: true,
+        commerce_enable_local_pickup: params.deliveryMethod !== "shipping",
+        commerce_enable_shipping: params.deliveryMethod !== "local_pickup",
         commerce_search_and_rp_available: true,
         commerce_search_and_rp_category_id: [],
         commerce_search_and_rp_condition: null,
         commerce_search_and_rp_ctime_days: null,
         filter_location_latitude: params.latitude,
         filter_location_longitude: params.longitude,
-        filter_price_lower_bound: params.minPrice
-          ? params.minPrice * 100
+        filter_price_lower_bound: params.minPrice !== undefined
+          ? Math.round(params.minPrice * 100)
           : 0,
-        filter_price_upper_bound: params.maxPrice
-          ? params.maxPrice * 100
+        filter_price_upper_bound: params.maxPrice !== undefined
+          ? Math.round(params.maxPrice * 100)
           : 214748364700,
         filter_radius_km: params.radiusKm,
       },
