@@ -95,6 +95,26 @@ test('confirmed server message is a correlated acknowledgement',()=>{
   assert.deepEqual(s.receipt('101','hello',1999),{threadId:'101',messageId:'mid.confirmed'});
   assert.equal(s.receipt('101','hello',2001),undefined);
 });
+
+test('fresh server echoes confirm exactly one matching reply without relying on a task label',()=>{
+  const s=new MessengerSnapshot();s.accountId='42';
+  ingest(s,thread(),message('mid.prior','101',1000,'hello','201','42'));
+  const previouslySeen=new Set(s.messages.keys());
+  assert.equal(s.confirmedServerEcho('101','hello',previouslySeen),undefined);
+  ingest(s,message('mid.new','101',2000,'hello','501','42'));
+  assert.deepEqual(s.confirmedServerEcho('101','hello',previouslySeen),{threadId:'101',messageId:'mid.new'});
+  assert.equal(s.confirmedServerEcho('101','different text',previouslySeen),undefined);
+  assert.equal(s.confirmedServerEcho('102','hello',previouslySeen),undefined);
+});
+test('echo confirmation rejects incoming messages and optimistic-only IDs',()=>{
+  const s=new MessengerSnapshot();s.accountId='42';
+  const prior=new Set(s.messages.keys());
+  ingest(s,message('mid.incoming','101',1000,'hello','200','43'),
+           message('offline_100','101',1001,'hello','100','42'),
+           message('offline:101','101',1002,'hello','101','42'),
+           message('700','101',1003,'hello','700','42'));
+  assert.equal(s.confirmedServerEcho('101','hello',prior),undefined);
+});
 test('ID validation rejects routes, negatives, zero and overflow',()=>{
   for(const id of ['../other','0','-1','1?x=y','9223372036854775808'])assert.throws(()=>validateFacebookId(id));
   assert.doesNotThrow(()=>validateFacebookId('9223372036854775807'));
