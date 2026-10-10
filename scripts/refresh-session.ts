@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import crypto from "node:crypto";
+import { totp } from "../src/utils/totp.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PROFILE_DIR = path.join(ROOT, ".fb-profile");
@@ -40,17 +40,6 @@ function readLoginEnv(): Record<string, string> {
     if (m) out[m[1]] = m[2];
   }
   return out;
-}
-
-function totp(secret: string): string {
-  const key = Buffer.from(secret.replace(/\s+/g, "").toUpperCase(), "base32" as any);
-  const counter = Math.floor(Date.now() / 30000);
-  const buf = Buffer.alloc(8);
-  buf.writeBigUInt64BE(BigInt(counter));
-  const hmac = crypto.createHmac("sha1", key).update(buf).digest();
-  const offset = hmac[hmac.length - 1] & 0xf;
-  const code = (hmac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000;
-  return code.toString().padStart(6, "0");
 }
 
 function currentHeader(): string {
