@@ -156,6 +156,26 @@ export class MessengerSnapshot {
     return messages.map(({id, senderId, text, sentAt}) => ({id, senderId, text: text || "[Non-text message]", sentAt}));
   }
 
+  /**
+   * A server-originated message row can confirm a send even when Facebook has
+   * changed its outgoing Lightspeed task label. A newly observed message ID,
+   * exact sender, exact thread and exact text are all required. Optimistic DOM
+   * echoes and messages already loaded before sending cannot qualify.
+   */
+  confirmedServerEcho(threadId: string, text: string, previouslySeen: ReadonlySet<string>): {threadId: string; messageId: string} | undefined {
+    if (!this.accountId) return undefined;
+    const confirmed = [...this.messages.values()].find(m =>
+      !previouslySeen.has(m.id) &&
+      m.threadId === threadId &&
+      m.senderId === this.accountId &&
+      m.text === text &&
+      !!m.id &&
+      m.id !== m.offlineId &&
+      !/^offline[_:.]/i.test(m.id)
+    );
+    return confirmed ? {threadId, messageId: confirmed.id} : undefined;
+  }
+
   receipt(threadId: string, text: string, after: number): {threadId: string; messageId: string} | undefined {
     for (const outgoing of this.outgoing.filter(o => o.threadId === threadId && o.text === text)) {
       if (this.failedOfflineIds.has(outgoing.offlineId)) throw new Error("Facebook rejected the outgoing message.");
