@@ -70,7 +70,8 @@ export class MessengerBrowser {
   private async loaded(state: MessengerSnapshot, threadId?: string): Promise<void> {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
-      if (threadId ? state.threads.has(threadId) && [...state.messages.values()].some(m => m.threadId === threadId) : state.marketplaceLoaded) {
+      const thread = threadId ? state.threads.get(threadId) : undefined;
+      if (threadId ? !!thread && (thread.syncGroup === "95" || [...state.messages.values()].some(m => m.threadId === threadId)) : state.marketplaceLoaded) {
         await delay(1200);
         return;
       }
@@ -106,12 +107,17 @@ export class MessengerBrowser {
     validateFacebookId(threadId);
     return this.exclusive(() => this.withPage(`messages/t/${threadId}/`, async (page, state) => {
       await this.loaded(state, threadId);
-      state.threadMessages(threadId, 1); // Reject missing/E2EE threads before entering text.
+      const target = state.threads.get(threadId);
+      if (!target || target.parentId !== "-12") throw new Error("Requested Marketplace conversation was not confirmed. Nothing was sent.");
+      // Encrypted threads may be sendable by the authenticated browser even
+      // though their plaintext never appears in server-side Lightspeed rows.
+      if (target.syncGroup !== "95") state.threadMessages(threadId, 1);
       await this.dismissRestorePrompt(page);
       const composer = page.locator('[role="textbox"][contenteditable="true"]');
       if (await composer.count() !== 1) throw new Error("Messenger composer was not uniquely identified. Nothing was sent.");
       let attempted = false;
       try {
+        const previouslySeen = new Set(state.messages.keys());
         await composer.fill(message);
         state.outgoing.length = 0;
         state.acknowledgements.clear();
@@ -120,7 +126,7 @@ export class MessengerBrowser {
         await composer.press("Enter");
         const deadline = Date.now() + 20_000;
         while (Date.now() < deadline) {
-          const receipt = state.receipt(threadId, message, started);
+          const receipt = state.receipt(threadId, message, started) ?? state.confirmedServerEcho(threadId, message, previouslySeen);
           if (receipt) return receipt;
           await delay(200);
         }
@@ -142,15 +148,15 @@ export class MessengerBrowser {
       if (await send.count() !== 1) throw new Error("Listing Send button was not uniquely identified. Nothing was sent.");
       let attempted = false;
       try {
+        const previouslySeen = new Set(state.messages.keys());
         await composer.fill(message);
-        const started = Date.now();
         attempted = true;
         await send.click();
         const deadline = Date.now() + 20_000;
         while (Date.now() < deadline) {
           // Initial contact may use a Marketplace GraphQL mutation rather than task 46.
           // Require a real server message in a Marketplace thread with this seller.
-          const confirmed = [...state.messages.values()].find(m => m.senderId === state.accountId && m.text === message && Number(m.sentAt) >= started && state.threads.get(m.threadId)?.parentId === "-12" && state.participants.get(m.threadId)?.has(sellerId));
+          const confirmed = [...state.messages.values()].find(m => !previouslySeen.has(m.id) && m.senderId === state.accountId && m.text === message && state.threads.get(m.threadId)?.parentId === "-12" && state.participants.get(m.threadId)?.has(sellerId));
           if (confirmed) return {threadId: confirmed.threadId, messageId: confirmed.id};
           await delay(200);
         }
